@@ -101,15 +101,86 @@ MeowMiau is a lightweight C application that demonstrates basic raylib usage. It
 ```
 MeowMiau/
 ├── src/              # Source code
-│   └── main.c        # Main application file
+│   ├── main.c        # Main application file
+│   └── assets.c      # Asset management utility
+├── include/          # Project header files
+│   ├── assets.h      # Asset utility header
+│   └── README.md     # Header organization guide
+├── assets/           # Game assets (images, audio, data)
+│   ├── images/       # Image files
+│   ├── audio/        # Audio files
+│   ├── data/         # Data files
+│   └── README.md     # Asset management guide
 ├── external/         # External dependencies
 │   └── raylib/       # Raylib graphics library
-├── cmake/            # CMake custom modules and toolchains
+├── cmake/            # CMake modules and configurations
+│   ├── CopyAssets.cmake  # Asset copying script
+│   ├── README.md     # CMake guide for external projects
 │   └── toolchains/   # Cross-compilation toolchains
 ├── scripts/          # Build and utility scripts
 ├── docker/           # Docker configurations
 └── CMakeLists.txt    # CMake build configuration
 ```
+
+## Asset Management
+
+Assets are automatically copied to the build directory during compilation and can be accessed using the asset management utility:
+
+```c
+#include "assets.h"
+#include "raylib.h"
+
+int main(void)
+{
+    InitWindow(800, 450, "Asset Loading Example");
+    
+    // Get full path to asset
+    char asset_path[512];
+    asset_get_path("images/sprite.png", asset_path, sizeof(asset_path));
+    
+    // Load using the path
+    Texture2D texture = LoadTexture(asset_path);
+    
+    // ... use texture ...
+    
+    UnloadTexture(texture);
+    CloseWindow();
+    return 0;
+}
+```
+
+See [assets/README.md](assets/README.md) for detailed asset organization and usage.
+
+## Header Organization
+
+Project headers are organized in the `include/` directory by feature/module:
+
+```
+include/
+├── assets.h          # Asset management
+├── graphics/
+│   ├── renderer.h
+│   └── camera.h
+└── audio/
+    └── sound.h
+```
+
+See [include/README.md](include/README.md) for guidelines on organizing headers.
+
+## Adding External Projects
+
+External libraries should be placed in `external/` and configured in `CMakeLists.txt`:
+
+```cmake
+add_subdirectory(external/mylib)
+
+target_link_libraries(meowmiau PRIVATE
+    mylib
+    raylib
+)
+```
+
+See [cmake/README.md](cmake/README.md) for detailed instructions on integrating external projects.
 
 ## Dependencies
 
