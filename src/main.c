@@ -1,147 +1,210 @@
-/*  test_world.c
- *  Compile:  gcc test_world.c room.c object.c sim_world.c -o test_world
- *  Exercises world init, tile generation, object placement, and
- *  projection math without needing raylib.
+/* main.c
+ *
+ *  Full pipeline:
+ *    1. Load room texture; build RoomLayout from 5 crop numbers
+ *       + image dimensions read from the texture.
+ *    2. Init SimWorld using the derived room dimensions.
+ *    3. Each frame: push background + one circle per integer (x,y)
+ *       at z=1 through the Renderer draw-call list, flush once.
+ *
+ *  All world positions are integer tile coordinates (Vec3W).
+ *  The only floating-point is inside room_layout_init() where
+ *  pixel sizes are derived.
  */
 
+#include "raylib.h"
+#include "spatial/room_layout.h"
+#include "render/renderer.h"
 #include "sim_world.h"
-#include <stdio.h>
-#include <assert.h>
+#include <limits.h>
+#include "render/object_renderer.h"
 
-static void print_floor(SimWorld *w)
+/* ---- viewport ----------------------------------------------- */
+#define SCREEN_W  800
+#define SCREEN_H  600
+
+/* ---- room image --------------------------------------------- */
+#define ROOM_IMAGE_PATH  "assets/room_bg.png"
+
+/* ── The 5 layout numbers ──────────────────────────────────────
+ *
+ *  Adjust these to match your actual pre-drawn room image.
+ *  rhombus_w_px and rhombus_v_px are derived from the image
+ *  dimensions together with the padding values below.
+ *
+ *  Vertical image layout (top → bottom):
+ *    | WALL_PAD | WALL_H_PX | RHOMBUS_V_PAD | rhombus_v_px | RHOMBUS_V_PAD |
+ *
+ *  Horizontal image layout:
+ *    | RHOMBUS_H_PAD | rhombus_w_px | RHOMBUS_H_PAD |
+ */
+#define RHOMBUS_H_PAD    6   /* horizontal padding each side          */
+#define WALL_PAD         3   /* dead pixels above usable wall area    */
+#define WALL_H_PX       29   /* usable wall pixel height              */
+#define RHOMBUS_V_PAD_TOP     3   /* dead pixels above floor rhombus       */
+#define RHOMBUS_V_PAD_BOTTOM  6   /* dead pixels below floor rhombus       */
+#define ISO_TILE_H_PX     4   /* iso tile face pixel height            */
+/* iso_tile_w_px = ISO_TILE_H_PX * 2 = 16 px                          */
+
+/* ---- circle appearance -------------------------------------- */
+#define CIRCLE_RADIUS  4
+#define CIRCLE_COLOR   ((Color){ 220, 60, 60, 200 })
+
+/* ================================================================
+ *  build_circle_texture
+ *
+ *  Renders a white filled circle on a transparent background into
+ *  a (2*radius+2) × (2*radius+2) texture.
+ * ================================================================ */
+static Texture2D build_circle_texture(int radius)
 {
-    Room *r = &w->room;
-    printf("\nFloor tile map (z=0):\n");
-    printf("  y\\x");
-    for (int x = 0; x <= r->width; x++) printf("  %2d", x);
-    printf("\n");
+    int side = radius * 2 + 2;
+    RenderTexture2D rt = LoadRenderTexture(side, side);
+    BeginTextureMode(rt);
+        ClearBackground(BLANK);
+        DrawCircle(side / 2, side / 2, (float)radius, WHITE);
+    EndTextureMode();
 
-    for (int y = 0; y <= r->depth; y++) {
-        printf("  %2d ", y);
-        for (int x = 0; x <= r->width; x++) {
-            static const char *names[] = {
-                " . ",   /* EMPTY       */
-                " F ",   /* FLOOR       */
-                "FEX",   /* FLOOR_EDGE_X*/
-                "FEY",   /* FLOOR_EDGE_Y*/
-                "FCR",   /* FLOOR_CORNER*/
-                "WLX",   /* WALL_X      */
-                "WLY",   /* WALL_Y      */
-                "CBK",   /* CORNER_BACK */
-                "CEL",   /* CEIL        */
-            };
-            TileType t = room_tile(r, x, y, 0);
-            printf("%s ", names[t < TILE_TYPE_COUNT ? t : 0]);
-        }
-        printf("\n");
-    }
+    /* OpenGL UV is bottom-up; bake a corrected image. */
+    Image img = LoadImageFromTexture(rt.texture);
+    ImageFlipVertical(&img);
+    Texture2D tex = LoadTextureFromImage(img);
+    UnloadImage(img);
+    UnloadRenderTexture(rt);
+    SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+    return tex;
 }
 
-/* ---- tunables ---- */
-#define SCREEN_W      640
-#define SCREEN_H      480
-#define TARGET_FPS     60
- 
-/* Room dimensions in world units.
- * Width/depth must be multiples of SPRITE_WORLD_STEP (=2).
- * Height must be a multiple of SPRITE_Z_STEP (=4).          */
-#define ROOM_WIDTH    12    /* world units, multiple of 2   */
-#define ROOM_DEPTH     8    /* world units, multiple of 2   */
-#define ROOM_HEIGHT    8    /* world units, multiple of 4   */
- 
-#define ATLAS_PATH    "assets/room_tiles.png"
-
-static void recalc_origin(RenderContext *rc, Room *room)
+/* ================================================================
+ *  push_circle
+ *
+ *  Projects world_pos to screen via the layout, then pushes a
+ *  tinted circle draw call into the renderer.
+ * ================================================================ */
+static void push_circle(Renderer *r, Texture2D *circle_tex,
+                        const RoomLayout *rl,
+                        Vec3W world_pos, Color tint)
 {
-    const int W = room->width;
-    const int D = room->depth;
-    const int H = room->height;
-
-    /* Total pixel size of the room's isometric bounding box. */
-    int bbox_w = (W + D) * (TILE_W / 2);
-    int bbox_h = (W + D) * (TILE_H / 2) + H * TILE_H;
-
-    /* Screen pixel for the back corner (0, 0, 0).
-     * Derived above; centres the bounding box on screen. */
-    int ox = SCREEN_W / 2 + (D - W) * (TILE_W / 4);
-    int oy = (SCREEN_H - bbox_h) / 2 + H * TILE_H + 4 /* px padding */;
-
-    renderer_set_origin(rc, ox, oy);
-
-    /* Keep room's own copy in sync (used by object tile queries). */
-    room->origin_sx = ox;
-    room->origin_sy = oy;
+    Vec2S sc   = renderer_project(r, world_pos);
+    int   side = circle_tex->width;
+    Rectangle src = { 0, 0, (float)side, (float)side };
+    Vector2   dst = { (float)(sc.sx - side / 2),
+                      (float)(sc.sy - side / 2) };
+    renderer_push(r, circle_tex, src, dst,
+                  world_sort_key(world_pos), tint);
 }
 
+/* ================================================================
+ *  main
+ * ================================================================ */
 int main(void)
 {
-    /* --- build a 6×4, 3-tall room --- */
-    SimWorld w;
-    assert(sim_world_init(&w, 6, 4, 3));
-    sim_world_populate_room(&w);
+    InitWindow(SCREEN_W, SCREEN_H, "Room Demo");
+    SetTargetFPS(60);
 
-    print_floor(&w);
+    /* ---- load image ------------------------------------------ */
+    Texture2D room_tex = LoadTexture(ROOM_IMAGE_PATH);
 
-    /* --- verify tile counts --- */
-    int floors = 0, walls_x = 0, walls_y = 0;
-    for (int y = 0; y <= w.room.depth; y++)
-        for (int x = 0; x <= w.room.width; x++) {
-            TileType t = room_tile(&w.room, x, y, 0);
-            if (t == TILE_FLOOR)        floors++;
-            if (t == TILE_WALL_X)       walls_x++;
-            if (t == TILE_WALL_Y)       walls_y++;
+    /* ---- build layout (img dimensions come from the texture) - */
+    RoomLayout rl = {
+        .rhombus_h_pad = RHOMBUS_H_PAD,
+        .wall_pad      = WALL_PAD,
+        .wall_h_px     = WALL_H_PX,
+        .rhombus_v_pad_top    = RHOMBUS_V_PAD_TOP,
+        .rhombus_v_pad_bottom = RHOMBUS_V_PAD_BOTTOM,
+        .iso_tile_h_px = ISO_TILE_H_PX,
+        .vp_w          = SCREEN_W,
+        .vp_h          = SCREEN_H,
+    };
+    
+    room_layout_init(&rl, &room_tex);
+
+    /* ---- init simulation ------------------------------------- */
+    SimWorld world;
+    sim_world_init(&world, rl.room_width, rl.room_depth, rl.room_height);
+    sim_world_populate_room(&world);
+
+    /* ---- renderer + circle sprite ---------------------------- */
+    Renderer  renderer;
+    renderer_init(&renderer, &rl);
+
+    ObjectRenderer obj_renderer;
+    object_renderer_init(&obj_renderer, &renderer);
+
+    Texture2D circle_tex = build_circle_texture(CIRCLE_RADIUS);
+
+    /* ================================================================
+     *  Main loop
+     * ================================================================ */
+    while (!WindowShouldClose())
+    {
+        sim_world_update(&world, GetFrameTime());
+
+        renderer_begin_frame(&renderer);
+
+        /* 1. Background — INT_MIN sort key so it is always first */
+        {
+            Rectangle src = { 0, 0,
+                              (float)room_tex.width,
+                              (float)room_tex.height };
+            Vector2 dst   = { (float)rl.img_offset_x,
+                              (float)rl.img_offset_y };
+            renderer_push(&renderer, &room_tex, src, dst, INT_MIN, WHITE);
         }
-    printf("\nFloor cells : %d (expected %d)\n", floors,
-           w.room.width * w.room.depth);
 
-    /* --- projection round-trip check --- */
-    w.room.origin_sx = 400;
-    w.room.origin_sy = 100;
+        /* 2. Circles at every integer (x,y) on z=1
+         *      x : 0 .. room_width   (inclusive)
+         *      y : 0 .. room_depth   (inclusive)
+         *    +x goes down-right, +y goes down-left, z=1 is one tile up */
+        for (int iy = 0; iy <= rl.room_depth; iy++)
+            for (int ix = 0; ix <= rl.room_width; ix++)
+                push_circle(&renderer, &circle_tex, &rl,
+                            (Vec3W){ ix, iy, 1 }, CIRCLE_COLOR);
 
-    Vec3W world_pt = { 3.0f, 2.0f, 1.0f };
-    Vec2S screen   = world_to_screen(world_pt,
-                                     w.room.origin_sx,
-                                     w.room.origin_sy);
-    Vec3W recovered = screen_to_world_z(screen, world_pt.z,
-                                        w.room.origin_sx,
-                                        w.room.origin_sy);
-    printf("\nProjection round-trip:\n");
-    printf("  world  (%.1f, %.1f, %.1f)\n",
-           world_pt.x, world_pt.y, world_pt.z);
-    printf("  screen (%d, %d)\n", screen.sx, screen.sy);
-    printf("  back   (%.2f, %.2f, %.2f)\n",
-           recovered.x, recovered.y, recovered.z);
-    assert((recovered.x - world_pt.x) < 0.01f);
-    assert((recovered.y - world_pt.y) < 0.01f);
+        BeginDrawing();
+            ClearBackground(BLACK);
+            renderer_flush(&renderer);
 
-    /* --- place a sofa --- */
-    Object *sofa = sim_world_place_furniture(
-        &w, (Vec3W){2.0f, 1.0f, 0.0f},
-            (Vec3W){2.0f, 1.0f, 1.0f}, 42);
-    assert(sofa);
-    printf("\nSofa id=%u at (%.0f,%.0f,%.0f) size (%.0f,%.0f,%.0f)\n",
-           sofa->id,
-           sofa->origin.x, sofa->origin.y, sofa->origin.z,
-           sofa->size.x,   sofa->size.y,   sofa->size.z);
+            /* ---- debug overlays --------------------------------
+             *  All drawn at z=0 (floor level) so any z-lift in
+             *  the circles shows up as a clear vertical offset.
+             *
+             *  Magenta cross : raw screen origin (origin_sx, origin_sy)
+             *                  = world (0,0,0) projected
+             *  Green  dot    : world (room_width, 0, 0)  — +x tip
+             *  Blue   dot    : world (0, room_depth, 0)  — +y tip
+             */
+            {
+                /* Magenta cross at origin */
+                int ox = rl.origin_sx, oy = rl.origin_sy;
+                DrawLine(ox - 6, oy,     ox + 6, oy,     MAGENTA);
+                DrawLine(ox,     oy - 6, ox,     oy + 6, MAGENTA);
+                DrawText("(0,0,0)", ox + 4, oy - 12, 12, MAGENTA);
 
-    /* --- spawn the cat --- */
-    Object *cat = sim_world_spawn_cat(&w, (Vec3W){4.0f, 3.0f, 0.0f});
-    assert(cat);
-    printf("Cat   id=%u at (%.0f,%.0f,%.0f)\n",
-           cat->id, cat->origin.x, cat->origin.y, cat->origin.z);
-    assert(w.cat_id == cat->id);
+                /* +x tip */
+                Vec2S px = renderer_project(&renderer, (Vec3W){ rl.room_width, 0, 0 });
+                DrawCircle(px.sx, px.sy, 4, GREEN);
+                DrawText(TextFormat("(%d,0,0)", rl.room_width),
+                         px.sx + 4, px.sy - 12, 12, GREEN);
 
-    /* --- query objects at sofa tile --- */
-    Object *hits[8];
-    int n = sim_world_objects_at_tile(&w, 2, 1, hits, 8);
-    printf("Objects at tile (2,1): %d found\n", n);
-    assert(n >= 1);
+                /* +y tip */
+                Vec2S py = renderer_project(&renderer, (Vec3W){ 0, rl.room_depth, 0 });
+                DrawCircle(py.sx, py.sy, 4, BLUE);
+                DrawText(TextFormat("(0,%d,0)", rl.room_depth),
+                         py.sx + 4, py.sy - 12, 12, BLUE);
+            }
 
-    /* --- run a few ticks --- */
-    for (int i = 0; i < 60; i++) sim_world_update(&w, 1.0f / 60.0f);
-    printf("Sim time after 60 ticks: %.3f s\n", w.time);
+            DrawText(TextFormat(
+                "tile %dpx x %dpx  |  room %d x %d x %d",
+                rl.iso_tile_w_px, rl.iso_tile_h_px,
+                rl.room_width, rl.room_depth, rl.room_height),
+                8, 8, 16, RAYWHITE);
+        EndDrawing();
+    }
 
-    sim_world_destroy(&w);
-    printf("\nAll assertions passed.\n");
+    UnloadTexture(circle_tex);
+    UnloadTexture(room_tex);
+    sim_world_destroy(&world);
+    CloseWindow();
     return 0;
 }
