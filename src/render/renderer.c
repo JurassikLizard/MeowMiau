@@ -6,6 +6,10 @@ void renderer_init(Renderer *r, const RoomLayout *layout)
 {
     memset(r, 0, sizeof(*r));
     r->layout = layout;
+
+    float sx = (float)layout->vp_w / (float)layout->img_w;
+    float sy = (float)layout->vp_h / (float)layout->img_h;
+    r->scale = (sx < sy ? sx : sy) * RENDER_SCALE_PAD;
 }
 
 void renderer_begin_frame(Renderer *r)
@@ -35,8 +39,29 @@ static int draw_call_cmp(const void *a, const void *b)
 void renderer_flush(Renderer *r)
 {
     qsort(r->calls, (size_t)r->call_count, sizeof(DrawCall), draw_call_cmp);
+
+    const float s = r->scale;
+    const float ox = r->layout->origin_sx;
+    const float oy = r->layout->origin_sy;
+
     for (int i = 0; i < r->call_count; i++) {
         DrawCall *dc = &r->calls[i];
-        DrawTextureRec(*dc->tex, dc->src, dc->dst, dc->tint);
+
+        float dx = ox + (dc->dst.x - ox) * s;
+        float dy = oy + (dc->dst.y - oy) * s;
+
+        DrawTexturePro(
+            *dc->tex,
+            dc->src,
+            (Rectangle){
+                dx,
+                dy,
+                dc->src.width  * s,
+                dc->src.height * s
+            },
+            (Vector2){0,0},
+            0.0f,
+            dc->tint
+        );
     }
 }

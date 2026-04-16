@@ -1,0 +1,63 @@
+# scene.toml
+#
+# [[type]]  defines a class of object — its visual and spatial properties.
+#           Types must come before [[object]] entries.
+#
+# [[object]] places an instance of a type into the world.
+#
+# render_offset: world-tile offset added to the instance pos before projecting.
+#   The projected point is where tex_origin lands on screen.
+# tex_origin: pixel in the texture that sits at that projected point.
+#   Together these let you align any pixel of the sprite to any tile position.
+
+[[type]]
+name    = "bookshelf"
+texture = "assets/bookshelf.png"
+size    = { x=1, y=2, z=2 }
+render_offset = { x=0, y=2, z=0 }
+tex_origin    = { x=2, y=28 }
+
+# [[type]]
+# name    = "food_bowl"
+# texture = "assets/food_bowl.png"
+# size    = { x=1, y=1, z=1 }
+# render_offset = { x=0, y=0, z=0 }
+# tex_origin    = { x=8, y=12 }
+
+# [[type]]
+# name    = "water_bowl"
+# texture = "assets/water_bowl.png"
+# size    = { x=1, y=1, z=1 }
+# render_offset = { x=0, y=0, z=0 }
+# tex_origin    = { x=8, y=12 }
+
+# [[type]]
+# name    = "cat"
+# texture = "assets/cat.png"
+# size    = { x=1, y=1, z=1 }
+# render_offset = { x=0, y=0, z=1 }
+# tex_origin    = { x=8, y=20 }
+
+# ----------------------------------------------------------------
+# Instances
+# ----------------------------------------------------------------
+
+[[object]]
+type = "bookshelf"
+pos  = { x=0, y=3, z=0 }
+
+# [[object]]
+# type = "bookshelf"
+# pos  = { x=5, y=0, z=0 }
+
+# [[object]]
+# type = "food_bowl"
+# pos  = { x=2, y=3, z=0 }
+
+# [[object]]
+# type = "water_bowl"
+# pos  = { x=3, y=3, z=0 }
+
+# [[object]]
+# type = "cat"
+# pos  = { x=2, y=2, z=0 }

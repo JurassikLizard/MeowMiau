@@ -1,9 +1,0 @@
-[[object]]
-id   = 1
-type = "STATIC"
-pos  = { x = 5, y = 3, z = 0 }
-
-[[object]]
-id   = 2
-type = "STATIC"
-pos  = { x = 8, y = 6, z = 0 }
