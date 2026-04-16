@@ -25,7 +25,8 @@ typedef enum {
 } ObjectFlags;
 
 typedef struct Object {
-    uint32_t     id;
+    uint32_t     id;              /* unique object instance id in registry */
+    uint32_t     obj_id;          /* object info registry id (type reference) */
     ObjectType   type;
     uint32_t     flags;
 
@@ -45,6 +46,8 @@ typedef struct {
     int      count;
     int      capacity;
     uint32_t next_id;
+    ObjectRenderer *obj_renderer; // non-owning pointer for rebaking after obj_kill
+    // TODO: PROPERLY CALL REBAKE WHEN SPAWNING OBJ, ALONG WITH PROPERLY PARSING MAP
 } ObjectRegistry;
 
 bool    obj_registry_init   (ObjectRegistry *reg);

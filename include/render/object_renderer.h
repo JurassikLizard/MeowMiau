@@ -7,6 +7,7 @@
 
 typedef struct {
     int id;               // from Object.id, for rebaking after obj_kill
+    uint32_t obj_id;      // from Object.obj_id, object info registry id
 
     // depth for sorting
     int depth;
@@ -34,17 +35,17 @@ typedef struct {
     Renderer *renderer;  // non-owning pointer for projection during bake
 } ObjectRenderer;
 
-bool object_renderer_init(ObjectRenderer *or, Renderer *r);
+bool object_renderer_init(Renderer *r, ObjectRenderer *or, ObjectRegistry *reg);
 void object_renderer_destroy(ObjectRenderer *or);
 
 /// @brief  Bakes all static objects from the registry into the renderer, get pushed to renderer by `object_renderer_push_static`. Should be called after an obj_kill that changes ids of static objects, to rebake the object registry.
 /// @param reg 
 /// @return Returns true on successful bake, false on failure (e.g. failure to project perspective or find objects).
-bool bake_static_objects(ObjectRenderer *or, const ObjectRegistry *reg);
+bool bake_static_objects(const ObjectRegistry *reg);
 
 /// @brief Called once per frame to push all static objects into the renderer. Should be called after `bake_static_objects` has been called at least once.
 /// @param or 
-void object_renderer_push_static(ObjectRenderer *or);
+void object_renderer_push_static(ObjectRegistry *reg);
 
 
 #endif /* OBJECT_RENDERER_H */

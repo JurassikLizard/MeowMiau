@@ -46,11 +46,12 @@ static bool ensure_capacity(StaticBakeCache *c, size_t needed)
    Lifecycle
    ============================ */
 
-bool object_renderer_init(ObjectRenderer *or, Renderer *r)
+bool object_renderer_init(Renderer *r, ObjectRenderer *or, ObjectRegistry *reg)
 {
     or->static_cache.objects = NULL;
     or->static_cache.count = 0;
     or->static_cache.capacity = 0;
+    reg->obj_renderer = or; // set back pointer for rebaking after obj_kill
     or->renderer = r;
     return true;
 }
@@ -70,9 +71,9 @@ void object_renderer_destroy(ObjectRenderer *or)
    Bake
    ============================ */
 
-bool bake_static_objects(ObjectRenderer *or, const ObjectRegistry *reg)
+bool bake_static_objects(const ObjectRegistry *reg)
 {
-    StaticBakeCache *cache = &or->static_cache;
+    StaticBakeCache *cache = &reg->obj_renderer->static_cache;
     cache->count = 0;
 
     if (!reg || reg->count == 0) return true;
@@ -89,6 +90,7 @@ bool bake_static_objects(ObjectRenderer *or, const ObjectRegistry *reg)
 
         BakedObject *bo = &cache->objects[cache->count++];
         bo->id = o->id;
+        bo->obj_id = o->obj_id;
 
         // depth
         bo->depth = obj_sort_key(o);
@@ -102,7 +104,7 @@ bool bake_static_objects(ObjectRenderer *or, const ObjectRegistry *reg)
             o->position.y + bo->sprite_render_offset_from_position.y,
             o->position.z + bo->sprite_render_offset_from_position.z
         };
-        Vec2S pos_at_render_offset = renderer_project(or->renderer, world_pos);
+        Vec2S pos_at_render_offset = renderer_project(reg->obj_renderer->renderer, world_pos);
 
         Vec2S render_pos = {
             pos_at_render_offset.sx - bo->sprite_texture_origin.sx,
@@ -128,9 +130,9 @@ bool bake_static_objects(ObjectRenderer *or, const ObjectRegistry *reg)
    Push per-frame
    ============================ */
 
-void object_renderer_push_static(ObjectRenderer *or)
+void object_renderer_push_static(ObjectRegistry *reg)
 {
-    const StaticBakeCache *cache = &or->static_cache;
+    const StaticBakeCache *cache = &reg->obj_renderer->static_cache;
 
     for (size_t i = 0; i < cache->count; i++)
     {
@@ -141,7 +143,7 @@ void object_renderer_push_static(ObjectRenderer *or)
         Vector2 dst = { bo->dest.x, bo->dest.y };
 
         renderer_push(
-            or->renderer,
+            reg->obj_renderer->renderer,
             bo->texture,
             bo->src,
             dst,

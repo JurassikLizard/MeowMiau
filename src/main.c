@@ -18,6 +18,7 @@
 #include "sim_world.h"
 #include <limits.h>
 #include "render/object_renderer.h"
+#include "gs/game_state.h"
 
 /* ---- viewport ----------------------------------------------- */
 #define SCREEN_W  800
@@ -101,6 +102,9 @@ int main(void)
 {
     InitWindow(SCREEN_W, SCREEN_H, "Room Demo");
     SetTargetFPS(60);
+
+    if (!game_state_load("data/object_info.toml", "data/map_info.toml"))
+        return 1;
 
     /* ---- load image ------------------------------------------ */
     Texture2D room_tex = LoadTexture(ROOM_IMAGE_PATH);

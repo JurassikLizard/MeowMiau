@@ -3,13 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-bool obj_registry_init(ObjectRegistry *reg)
+bool obj_registry_init(ObjectRegistry *reg, ObjectInfoRegistry *objinfo_reg)
 {
     reg->items    = (Object *)calloc(OBJECT_POOL_INITIAL, sizeof(Object));
     if (!reg->items) return false;
     reg->count    = 0;
     reg->capacity = OBJECT_POOL_INITIAL;
     reg->next_id  = 1;
+    reg->objinfo_reg = objinfo_reg;
     return true;
 }
 
@@ -23,7 +24,7 @@ void obj_registry_destroy(ObjectRegistry *reg)
     }
 }
 
-Object *obj_spawn(ObjectRegistry *reg, ObjectType type)
+Object *obj_spawn(ObjectRegistry *reg, uint32_t obj_id)
 {
     if (reg->count >= reg->capacity) {
         int new_cap = reg->capacity * 2;
@@ -35,7 +36,9 @@ Object *obj_spawn(ObjectRegistry *reg, ObjectType type)
     Object *o    = &reg->items[reg->count++];
     memset(o, 0, sizeof(Object));
     o->id        = reg->next_id++;
-    o->type      = type;
+    o->obj_id    = obj_id;
+    o->type      = OBJECT_GENERIC;  /* type determined by ObjectInfo now */
+
     return o;
 }
 
@@ -47,7 +50,7 @@ void obj_kill(ObjectRegistry *reg, uint32_t id)
             reg->items[i] = reg->items[--reg->count];
             if (killed_item_flags & OBJ_FLAG_STATIC || reg->items[i].flags & OBJ_FLAG_STATIC) {
                 // If the killed or swapped item is static, we need to rebake the object registry to update the renderer's baked static objects.
-                //bake_static_objects(reg);
+                bake_static_objects(reg);
             }
             return;
         }

@@ -2,12 +2,12 @@
 #include <string.h>
 
 bool sim_world_init(SimWorld *w, int room_width, int room_depth,
-                    int room_height)
+                    int room_height, ObjectInfoRegistry *objinfo_reg)
 {
     memset(w, 0, sizeof(*w));
     if (!room_init(&w->room, room_width, room_depth, room_height))
         return false;
-    if (!obj_registry_init(&w->objects)) {
+    if (!obj_registry_init(&w->objects, objinfo_reg)) {
         room_destroy(&w->room);
         return false;
     }
@@ -28,7 +28,7 @@ void sim_world_destroy(SimWorld *w)
 Object *sim_world_place_furniture(SimWorld *w, Vec3W position,
                                   Vec3W size, int sprite_id)
 {
-    Object *o = obj_spawn(&w->objects, OBJECT_FURNITURE);
+    Object *o = obj_spawn(&w->objects, sprite_id);
     if (!o) return NULL;
     o->position    = position;
     o->size      = size;
@@ -39,7 +39,9 @@ Object *sim_world_place_furniture(SimWorld *w, Vec3W position,
 
 Object *sim_world_spawn_cat(SimWorld *w, Vec3W pos)
 {
-    Object *cat = obj_spawn(&w->objects, OBJECT_CAT);
+    /* TODO: Get CAT obj_id from config/ObjectInfoRegistry */
+    uint32_t cat_obj_id = 2;  /* placeholder; should be looked up from registry */
+    Object *cat = obj_spawn(&w->objects, cat_obj_id);
     if (!cat) return NULL;
     cat->position = pos;
     cat->size   = (Vec3W){ 1, 1, 1 };

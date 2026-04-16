@@ -10,9 +10,9 @@ typedef enum {
 } MapObjectType;
 
 typedef struct {
-    uint32_t id;        // object_info id
-    MapObjectType type; // only STATIC for now
-    Vec3W pos;
+    uint32_t      id;    // matches an ObjectInfo id
+    MapObjectType type;
+    Vec3W         pos;
 } MapObject;
 
 typedef struct {
@@ -25,7 +25,10 @@ typedef struct {
    API
    ============================ */
 
+// Parse TOML. Returns false on failure.
 bool mapinfo_load_from_toml(MapInfo *map, const char *path);
+
+// Free all memory.
 void mapinfo_free(MapInfo *map);
 
-#endif
+#endif // MAP_INFO_H
