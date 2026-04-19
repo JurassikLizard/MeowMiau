@@ -1,33 +1,22 @@
-/* main.c
- *
- *  Pipeline:
- *    1. Load room texture; build RoomLayout from crop constants.
- *    2. Load scene (types + instances) from a single TOML file.
- *    3. Each frame: push background + all scene objects into the
- *       Renderer draw-call list, flush once (sorted back-to-front).
- *
- *  All world positions are integer tile coordinates (Vec3W).
- *  The only floating-point is inside room_layout_init() where
- *  pixel sizes are derived from image dimensions.
- */
+/* main.c */
 
 #include "raylib.h"
 #include "spatial/room_layout.h"
 #include "render/renderer.h"
 #include "scene_object.h"
 #include <limits.h>
+#include <string.h>
 
 /* ---- viewport ----------------------------------------------- */
 #define SCREEN_W  800
 #define SCREEN_H  600
 
 /* ---- assets ------------------------------------------------- */
-#define ROOM_IMAGE_PATH  "assets/room_bg.png"
-#define SCENE_TOML_PATH  "assets/data/scene.toml"
+#define ROOM_IMAGE_PATH        "assets/room_bg.png"
+#define SCENE_TOML_PATH        "assets/data/scene.toml"
+#define DEBUG_CIRCLE_PNG_PATH  "assets/debug_circle.png"
 
-/* ── Room layout crop constants ────────────────────────────────
- *  Adjust to match the actual pre-drawn room image.
- */
+/* ---- room layout crop constants ----------------------------- */
 #define RHOMBUS_H_PAD         6
 #define WALL_PAD              3
 #define WALL_H_PX            29
@@ -40,37 +29,66 @@
 #define CIRCLE_COLOR   ((Color){ 220, 60, 60, 200 })
 
 /* ================================================================
- *  build_circle_texture  (debug helper, unchanged from original)
+ *  export_circle_texture
+ *
+ *  Builds a small circle sprite and writes it to disk as a PNG so
+ *  scene.toml can reference it as a normal "debug_circle" type.
+ *  Safe to call every launch — ExportImage is a no-op if unchanged.
  * ================================================================ */
-static Texture2D build_circle_texture(int radius)
+static void export_circle_texture(int radius, const char *path)
 {
     int side = radius * 2 + 2;
     RenderTexture2D rt = LoadRenderTexture(side, side);
     BeginTextureMode(rt);
         ClearBackground(BLANK);
-        DrawCircle(side / 2, side / 2, (float)radius, WHITE);
+        DrawCircle(side / 2, side / 2, (float)radius, CIRCLE_COLOR);
     EndTextureMode();
     Image img = LoadImageFromTexture(rt.texture);
     ImageFlipVertical(&img);
-    Texture2D tex = LoadTextureFromImage(img);
+    ExportImage(img, path);
     UnloadImage(img);
     UnloadRenderTexture(rt);
-    SetTextureFilter(tex, TEXTURE_FILTER_POINT);
-    return tex;
 }
 
 /* ================================================================
- *  push_circle  (debug helper, unchanged from original)
+ *  register_debug_circle_type
+ *
+ *  Injects the "debug_circle" ObjectType directly into the scene
+ *  without going through TOML. The PNG must already exist on disk.
+ *  tex_origin is set to the centre of the sprite so the circle
+ *  sits on the projected tile corner.
  * ================================================================ */
-static void push_circle(Renderer *r, Texture2D *circle_tex,
-                        Vec3W world_pos, Color tint)
+static void register_debug_circle_type(Scene *s, const char *png_path)
 {
-    Vec2S sc   = renderer_project(r, world_pos);
-    int   side = circle_tex->width;
-    Rectangle src = { 0, 0, (float)side, (float)side };
-    Vector2   dst = { (float)(sc.sx - side / 2),
-                      (float)(sc.sy - side / 2) };
-    renderer_push(r, circle_tex, src, dst, world_sort_key(world_pos), tint);
+    if (s->type_count >= SCENE_MAX_TYPES) {
+        TraceLog(LOG_ERROR, "register_debug_circle_type: type limit reached\n");
+        return;
+    }
+    ObjectType *ot = &s->types[s->type_count++];
+    memset(ot, 0, sizeof(*ot));
+
+    strncpy(ot->name, "debug_circle", sizeof(ot->name) - 1);
+    ot->texture  = LoadTexture(png_path);
+    ot->src_rect = (Rectangle){ 0, 0,
+                                (float)ot->texture.width,
+                                (float)ot->texture.height };
+    ot->size          = (Vec3W){ 1, 1, 1 };
+    ot->render_offset = (Vec3W){ 0, 0, 0 };
+    /* Centre of sprite lands on the projected point. */
+    ot->tex_origin    = (Vec2S){ ot->texture.width  / 2,
+                                 ot->texture.height / 2 };
+}
+
+/* ================================================================
+ *  spawn_debug_circles
+ *
+ *  One "debug_circle" object per tile corner at z=1.
+ * ================================================================ */
+static void spawn_debug_circles(Scene *s, const RoomLayout *rl)
+{
+    for (int iy = 0; iy <= rl->room_depth; iy++)
+        for (int ix = 0; ix <= rl->room_width; ix++)
+            scene_spawn(s, "debug_circle", (Vec3W){ ix, iy, 1 });
 }
 
 /* ================================================================
@@ -80,6 +98,9 @@ int main(void)
 {
     InitWindow(SCREEN_W, SCREEN_H, "Room Demo");
     SetTargetFPS(60);
+
+    /* ---- export debug circle PNG (once; cached on disk) ------ */
+    export_circle_texture(CIRCLE_RADIUS, DEBUG_CIRCLE_PNG_PATH);
 
     /* ---- room image ------------------------------------------ */
     Texture2D room_tex = LoadTexture(ROOM_IMAGE_PATH);
@@ -101,13 +122,14 @@ int main(void)
     Renderer renderer;
     renderer_init(&renderer, &rl);
 
-    /* ---- scene (types + instances from one TOML) ------------- */
+    /* ---- scene (types + instances from TOML) ----------------- */
     Scene scene;
     if (!scene_load_toml(&scene, SCENE_TOML_PATH))
         return 1;
 
-    /* ---- debug circle sprite --------------------------------- */
-    Texture2D circle_tex = build_circle_texture(CIRCLE_RADIUS);
+    /* ---- debug circles (type registered, instances spawned) -- */
+    register_debug_circle_type(&scene, DEBUG_CIRCLE_PNG_PATH);
+    spawn_debug_circles(&scene, &rl);
 
     /* ================================================================
      *  Main loop
@@ -126,14 +148,8 @@ int main(void)
             renderer_push(&renderer, &room_tex, src, dst, INT_MIN, WHITE);
         }
 
-        /* 2. All scene objects */
+        /* 2. All scene objects (auto-sorts on first frame / when dirty) */
         scene_push_objects(&scene, &renderer);
-
-        /* 3. Debug: tile-corner circles at z=1 */
-        for (int iy = 0; iy <= rl.room_depth; iy++)
-            for (int ix = 0; ix <= rl.room_width; ix++)
-                push_circle(&renderer, &circle_tex,
-                            (Vec3W){ ix, iy, 1 }, CIRCLE_COLOR);
 
         BeginDrawing();
             ClearBackground(BLACK);
@@ -166,7 +182,6 @@ int main(void)
         EndDrawing();
     }
 
-    UnloadTexture(circle_tex);
     UnloadTexture(room_tex);
     scene_unload(&scene);
     CloseWindow();
